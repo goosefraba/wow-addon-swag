@@ -667,11 +667,12 @@ minimapBtn:SetScript("OnDragStop", function(self)
     if db then db.minimapAngle = minimapAngle end
 end)
 
--- Hidden frame required by EasyMenu
 local minimapDropdown = CreateFrame("Frame", "SWAGMinimapDropdown", UIParent, "UIDropDownMenuTemplate")
 
-local function ShowMinimapDropdown(self)
-    local menu = {}
+UIDropDownMenu_Initialize(minimapDropdown, function(self, level)
+    if level ~= 1 then return end
+
+    local info = UIDropDownMenu_CreateInfo()
 
     -- List all sets sorted alphabetically
     local names = {}
@@ -683,37 +684,45 @@ local function ShowMinimapDropdown(self)
     end
 
     if #names == 0 then
-        table.insert(menu, { text = "|cFF" .. C_MUTED .. "No sets saved|r", isTitle = true, notCheckable = true })
+        info.text = "|cFF" .. C_MUTED .. "No sets saved|r"
+        info.isTitle = true
+        info.notCheckable = true
+        UIDropDownMenu_AddButton(info)
     else
-        for _, name in ipairs(names) do
-            local setName = name
-            table.insert(menu, {
-                text = setName,
-                icon = db.sets[setName] and db.sets[setName].icon or DEFAULT_ICON,
-                func = function() EquipSet(setName) end,
-                notCheckable = true,
-            })
+        for _, setName in ipairs(names) do
+            info = UIDropDownMenu_CreateInfo()
+            info.text = setName
+            info.icon = db.sets[setName] and db.sets[setName].icon or DEFAULT_ICON
+            info.notCheckable = true
+            info.func = function() EquipSet(setName) end
+            UIDropDownMenu_AddButton(info)
         end
     end
 
-    table.insert(menu, { text = "", isTitle = true, notCheckable = true })  -- divider
-    table.insert(menu, {
-        text = "Open SWAG",
-        func = function() if f:IsShown() then f:Hide() else f:Show() end end,
-        notCheckable = true,
-    })
-    table.insert(menu, {
-        text = "Settings",
-        func = function() settingsPanel.OpenBliz() end,
-        notCheckable = true,
-    })
-    table.insert(menu, { text = "CANCEL", isTitle = false, notCheckable = true })
+    -- Divider
+    info = UIDropDownMenu_CreateInfo()
+    info.text = ""
+    info.isTitle = true
+    info.notCheckable = true
+    UIDropDownMenu_AddButton(info)
 
-    EasyMenu(menu, minimapDropdown, self, 0, 0, "MENU")
-end
+    -- Open SWAG
+    info = UIDropDownMenu_CreateInfo()
+    info.text = "Open SWAG"
+    info.notCheckable = true
+    info.func = function() if f:IsShown() then f:Hide() else f:Show() end end
+    UIDropDownMenu_AddButton(info)
+
+    -- Settings
+    info = UIDropDownMenu_CreateInfo()
+    info.text = "Settings"
+    info.notCheckable = true
+    info.func = function() settingsPanel.OpenBliz() end
+    UIDropDownMenu_AddButton(info)
+end, "MENU")
 
 minimapBtn:SetScript("OnClick", function(self, button)
-    ShowMinimapDropdown(self)
+    ToggleDropDownMenu(1, nil, minimapDropdown, self, 0, 0)
 end)
 
 minimapBtn:SetScript("OnEnter", function(self)
