@@ -667,9 +667,49 @@ minimapBtn:SetScript("OnDragStop", function(self)
     if db then db.minimapAngle = minimapAngle end
 end)
 
+-- Hidden frame required by EasyMenu
+local minimapDropdown = CreateFrame("Frame", "SWAGMinimapDropdown", UIParent, "UIDropDownMenuTemplate")
+
+local function ShowMinimapDropdown(self)
+    local menu = {}
+
+    -- List all sets sorted alphabetically
+    local names = {}
+    if db and db.sets then
+        for name in pairs(db.sets) do
+            table.insert(names, name)
+        end
+        table.sort(names)
+    end
+
+    if #names == 0 then
+        table.insert(menu, { text = "|cFF" .. C_MUTED .. "No sets saved|r", isTitle = true, notCheckable = true })
+    else
+        for _, name in ipairs(names) do
+            local setName = name  -- capture for closure
+            table.insert(menu, {
+                text = setName,
+                icon = db.sets[setName] and db.sets[setName].icon or DEFAULT_ICON,
+                func = function() EquipSet(setName) end,
+                notCheckable = true,
+            })
+        end
+    end
+
+    table.insert(menu, { text = "", isTitle = true, notCheckable = true })  -- divider
+    table.insert(menu, {
+        text = "Settings",
+        func = function() settingsPanel.OpenBliz() end,
+        notCheckable = true,
+    })
+    table.insert(menu, { text = "CANCEL", isTitle = false, notCheckable = true })
+
+    EasyMenu(menu, minimapDropdown, self, 0, 0, "MENU")
+end
+
 minimapBtn:SetScript("OnClick", function(self, button)
     if button == "RightButton" then
-        settingsPanel.OpenBliz()
+        ShowMinimapDropdown(self)
     else
         if f and f:IsShown() then f:Hide() else f:Show() end
     end
@@ -679,7 +719,7 @@ minimapBtn:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_LEFT")
     GameTooltip:AddLine("|cFF" .. ACCENT .. "SWAG|r")
     GameTooltip:AddLine("Left-click to toggle panel", 0.7, 0.7, 0.7)
-    GameTooltip:AddLine("Right-click for settings", 0.7, 0.7, 0.7)
+    GameTooltip:AddLine("Right-click to switch set", 0.7, 0.7, 0.7)
     GameTooltip:AddLine("Drag to reposition", 0.5, 0.5, 0.5)
     GameTooltip:Show()
 end)
