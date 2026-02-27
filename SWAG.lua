@@ -1287,7 +1287,6 @@ end
 SLASH_SWAG1 = "/swag"
 
 SlashCmdList["SWAG"] = function(msg)
-    D("Slash command: '" .. tostring(msg) .. "'")
     msg = (msg or ""):trim()
 
     if msg == "" then
