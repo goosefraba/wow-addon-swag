@@ -28,6 +28,14 @@ local isBankOpen = false
 -- Default icon for sets (generic chest armor)
 local DEFAULT_ICON = "Interface\\Icons\\INV_Chest_Chain"
 
+-- C_Container compatibility shims (Anniversary Edition uses modern client)
+local _PickupContainerItem = C_Container and C_Container.PickupContainerItem or PickupContainerItem
+local _GetContainerNumSlots = C_Container and C_Container.GetContainerNumSlots or GetContainerNumSlots
+local _GetContainerItemLink = C_Container and C_Container.GetContainerItemLink or GetContainerItemLink
+local _GetContainerItemID = C_Container and C_Container.GetContainerItemID or GetContainerItemID
+local _GetContainerNumFreeSlots = C_Container and C_Container.GetContainerNumFreeSlots or GetContainerNumFreeSlots
+local _UseContainerItem = C_Container and C_Container.UseContainerItem or UseContainerItem
+
 -- Equipment slots to track (1-19, skip 0=ammo)
 local EQUIPMENT_SLOTS = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19 }
 local SLOT_NAMES = {
@@ -105,9 +113,9 @@ end
 local function FindItemInBags(itemId, itemLink)
     -- Exact link match first (preserves enchant/gem identity)
     for bag = 0, 4 do
-        local numSlots = GetContainerNumSlots(bag)
+        local numSlots = _GetContainerNumSlots(bag)
         for slot = 1, numSlots do
-            local link = GetContainerItemLink(bag, slot)
+            local link = _GetContainerItemLink(bag, slot)
             if link and link == itemLink then
                 return bag, slot
             end
@@ -116,9 +124,9 @@ local function FindItemInBags(itemId, itemLink)
     -- Fallback: item ID match
     if itemId then
         for bag = 0, 4 do
-            local numSlots = GetContainerNumSlots(bag)
+            local numSlots = _GetContainerNumSlots(bag)
             for slot = 1, numSlots do
-                local id = GetContainerItemID(bag, slot)
+                local id = _GetContainerItemID(bag, slot)
                 if id and id == itemId then
                     return bag, slot
                 end
@@ -132,9 +140,9 @@ local function FindItemInBank(itemId, itemLink)
     local bankBags = { -1, 5, 6, 7, 8, 9, 10, 11 }
     -- Exact link match first
     for _, bag in ipairs(bankBags) do
-        local numSlots = GetContainerNumSlots(bag)
+        local numSlots = _GetContainerNumSlots(bag)
         for slot = 1, numSlots do
-            local link = GetContainerItemLink(bag, slot)
+            local link = _GetContainerItemLink(bag, slot)
             if link and link == itemLink then
                 return bag, slot
             end
@@ -143,10 +151,26 @@ local function FindItemInBank(itemId, itemLink)
     -- Fallback: item ID
     if itemId then
         for _, bag in ipairs(bankBags) do
-            local numSlots = GetContainerNumSlots(bag)
+            local numSlots = _GetContainerNumSlots(bag)
             for slot = 1, numSlots do
-                local id = GetContainerItemID(bag, slot)
+                local id = _GetContainerItemID(bag, slot)
                 if id and id == itemId then
+                    return bag, slot
+                end
+            end
+        end
+    end
+    return nil, nil
+end
+
+local function FindEmptyBagSlot()
+    for bag = 0, 4 do
+        local free, bagType = _GetContainerNumFreeSlots(bag)
+        -- Only use normal bags (bagType 0), skip specialty bags (quiver, ammo, etc.)
+        if bagType == 0 and free > 0 then
+            local numSlots = _GetContainerNumSlots(bag)
+            for slot = 1, numSlots do
+                if not _GetContainerItemLink(bag, slot) then
                     return bag, slot
                 end
             end
@@ -158,7 +182,7 @@ end
 local function GetTotalFreeBagSlots()
     local total = 0
     for bag = 0, 4 do
-        local free, bagType = GetContainerNumFreeSlots(bag)
+        local free, bagType = _GetContainerNumFreeSlots(bag)
         if bagType == 0 then
             total = total + free
         end
@@ -355,27 +379,36 @@ local function EquipSet(name)
 
     D("Equipping " .. #queue .. " items for set: " .. name)
 
-    local index = 0
-    local function ProcessNext()
-        index = index + 1
-        if index > #queue then
-            if db.settings.chatMessages then
-                P("Equipped set: |cFF" .. C_GOLD .. name .. "|r")
-            end
-            if RefreshSetList then RefreshSetList() end
-            return
-        end
+    -- Direct loop — must stay in hardware event context (no timers)
+    local equipped = 0
+    for _, swap in ipairs(queue) do
         if InCombatLockdown() then
-            P("|cFF" .. C_ERROR .. "Entered combat! Equip aborted at item " .. index .. "/" .. #queue .. ".|r")
-            return
+            P("|cFF" .. C_ERROR .. "Entered combat! Equip aborted.|r")
+            break
         end
-        local swap = queue[index]
-        D("Equipping slot " .. swap.slotId .. ": " .. (swap.link or "?"))
-        EquipItemByName(swap.link, swap.slotId)
-        C_Timer.After(0.3, ProcessNext)
+
+        local bag, slot = FindItemInBags(swap.id, swap.link)
+        if bag then
+            D("Equipping slot " .. swap.slotId .. ": " .. (swap.link or "?"))
+            pcall(_PickupContainerItem, bag, slot)
+            pcall(PickupInventoryItem, swap.slotId)
+            ClearCursor()  -- always clean up
+            if GetInventoryItemLink("player", swap.slotId) then
+                equipped = equipped + 1
+                D("  -> OK")
+            else
+                D("  -> equip failed")
+            end
+        else
+            D("Skip slot " .. swap.slotId .. ": item not found in bags")
+        end
     end
 
-    ProcessNext()
+    ClearCursor()
+    if db.settings.chatMessages then
+        P("Equipped set: |cFF" .. C_GOLD .. name .. "|r (" .. equipped .. "/" .. #queue .. " items)")
+    end
+    if RefreshSetList then RefreshSetList() end
 end
 
 -- ===========================================================================
@@ -388,63 +421,48 @@ local function Undress()
         return
     end
 
-    local slotsToUnequip = {}
-    for _, slotId in ipairs(EQUIPMENT_SLOTS) do
-        if GetInventoryItemLink("player", slotId) then
-            table.insert(slotsToUnequip, slotId)
-        end
-    end
-
-    if #slotsToUnequip == 0 then
-        P("Nothing equipped to remove.")
-        return
-    end
-
-    local freeSlots = GetTotalFreeBagSlots()
-    if freeSlots < #slotsToUnequip then
-        P("|cFF" .. C_WARN .. "Warning:|r Only " .. freeSlots .. " free bag slots for " .. #slotsToUnequip .. " items.")
-    end
+    ClearCursor()
 
     local count = 0
-    local index = 0
 
-    local function ProcessNext()
-        index = index + 1
-        if index > #slotsToUnequip then
-            if db.settings.chatMessages then
-                P("Removed " .. count .. " items to bags.")
+    for _, slotId in ipairs(EQUIPMENT_SLOTS) do
+        if GetInventoryItemLink("player", slotId) then
+            local emptyBag, emptySlot = FindEmptyBagSlot()
+            if not emptyBag then
+                P("|cFF" .. C_WARN .. "Bags full!|r Removed " .. count .. " items.")
+                ClearCursor()
+                return
             end
-            return
-        end
-        if InCombatLockdown() then
-            P("|cFF" .. C_ERROR .. "Entered combat! Undress aborted.|r")
-            return
-        end
-        local slotId = slotsToUnequip[index]
-        local link = GetInventoryItemLink("player", slotId)
-        if link then
-            ClearCursor()
-            PickupInventoryItem(slotId)
-            if CursorHasItem() then
-                PutItemInBackpack()
-                if CursorHasItem() then
-                    for bag = 1, 4 do
-                        PutItemInBag(19 + bag)
-                        if not CursorHasItem() then break end
-                    end
-                end
-                if CursorHasItem() then
-                    ClearCursor()
-                    D("Failed to unequip slot " .. slotId .. " (bags full?)")
-                else
-                    count = count + 1
-                end
+            D("Undress " .. slotId .. " (" .. (SLOT_NAMES[slotId] or "?") .. ") -> bag " .. emptyBag .. " slot " .. emptySlot)
+            -- pcall prevents a taint error from killing the function before ClearCursor runs
+            pcall(PickupInventoryItem, slotId)
+            pcall(_PickupContainerItem, emptyBag, emptySlot)
+            ClearCursor()  -- always runs, even if above calls threw errors
+            if not GetInventoryItemLink("player", slotId) then
+                count = count + 1
+                D("  -> OK")
+            else
+                D("  -> still equipped")
             end
         end
-        C_Timer.After(0.1, ProcessNext)
     end
 
-    ProcessNext()
+    ClearCursor()
+
+    local remaining = 0
+    for _, slotId in ipairs(EQUIPMENT_SLOTS) do
+        if GetInventoryItemLink("player", slotId) then
+            remaining = remaining + 1
+        end
+    end
+
+    if count == 0 and remaining == 0 then
+        P("Nothing equipped to remove.")
+    elseif remaining > 0 then
+        P("Removed " .. count .. " items. |cFF" .. C_WARN .. remaining .. " still equipped|r — click again.")
+    elseif db.settings.chatMessages then
+        P("Removed " .. count .. " items to bags.")
+    end
 end
 
 -- ===========================================================================
@@ -474,7 +492,7 @@ local function StoreInBank(name)
     for slotId, itemData in pairs(set.items) do
         local bag, slot = FindItemInBags(itemData.id, itemData.link)
         if bag then
-            UseContainerItem(bag, slot)
+            _UseContainerItem(bag, slot)
             stored = stored + 1
         else
             local equippedLink = GetInventoryItemLink("player", slotId)
@@ -523,7 +541,7 @@ local function LoadFromBank(name)
     for slotId, itemData in pairs(set.items) do
         local bag, slot = FindItemInBank(itemData.id, itemData.link)
         if bag then
-            UseContainerItem(bag, slot)
+            _UseContainerItem(bag, slot)
             loaded = loaded + 1
         else
             -- Item might already be in bags or equipped, not an error
@@ -553,6 +571,19 @@ StaticPopupDialogs["SWAG_CONFIRM_DELETE"] = {
     button2 = "Cancel",
     OnAccept = function(self, data)
         DeleteSet(data)
+    end,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    exclusive = true,
+}
+
+StaticPopupDialogs["SWAG_CONFIRM_UPDATE"] = {
+    text = "Update set \"%s\" with your current gear?\nThis will overwrite the existing items.",
+    button1 = "Update",
+    button2 = "Cancel",
+    OnAccept = function(self, data)
+        SaveSet(data)
     end,
     timeout = 0,
     whileDead = true,
@@ -825,15 +856,29 @@ for i = 1, MAX_VISIBLE_ROWS do
     -- Equip button
     local equipBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
     equipBtn:SetSize(44, 22)
-    equipBtn:SetPoint("RIGHT", row, "RIGHT", -32, 0)
+    equipBtn:SetPoint("RIGHT", row, "RIGHT", -58, 0)
     equipBtn:SetText("Wear")
     equipBtn:GetFontString():SetFont(GameFontNormalSmall:GetFont())
     row.equipBtn = equipBtn
 
+    -- Update button
+    local updateBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+    updateBtn:SetSize(22, 22)
+    updateBtn:SetPoint("LEFT", equipBtn, "RIGHT", 2, 0)
+    updateBtn:SetText("|cFF44FF44S|r")
+    updateBtn:GetFontString():SetFont(GameFontNormalSmall:GetFont())
+    updateBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:AddLine("Update set with current gear")
+        GameTooltip:Show()
+    end)
+    updateBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    row.updateBtn = updateBtn
+
     -- Delete button
     local delBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
     delBtn:SetSize(22, 22)
-    delBtn:SetPoint("LEFT", equipBtn, "RIGHT", 2, 0)
+    delBtn:SetPoint("LEFT", updateBtn, "RIGHT", 2, 0)
     delBtn:SetText("X")
     delBtn:GetFontString():SetFont(GameFontNormalSmall:GetFont())
     row.delBtn = delBtn
@@ -918,6 +963,10 @@ RefreshSetList = function()
 
                 row.equipBtn:SetScript("OnClick", function()
                     EquipSet(setName)
+                end)
+                row.updateBtn:SetScript("OnClick", function()
+                    local popup = StaticPopup_Show("SWAG_CONFIRM_UPDATE", setName)
+                    if popup then popup.data = setName end
                 end)
                 row.delBtn:SetScript("OnClick", function()
                     local popup = StaticPopup_Show("SWAG_CONFIRM_DELETE", setName)
@@ -1315,7 +1364,7 @@ loader:RegisterEvent("BANKFRAME_OPENED")
 loader:RegisterEvent("BANKFRAME_CLOSED")
 
 loader:SetScript("OnEvent", function(self, event, arg1)
-    if event == "ADDON_LOADED" and arg1 == ADDON_NAME then
+    if event == "ADDON_LOADED" and arg1:upper() == ADDON_NAME:upper() then
         InitDB()
 
         -- Restore frame position
