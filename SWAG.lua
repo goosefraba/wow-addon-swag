@@ -1053,21 +1053,9 @@ bottomArea:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 12, 10)
 bottomArea:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -12, 10)
 bottomArea:SetHeight(30)
 
-local undressBtn = CreateFrame("Button", nil, bottomArea, "UIPanelButtonTemplate")
-undressBtn:SetSize(70, 24)
-undressBtn:SetPoint("LEFT", bottomArea, "LEFT", 0, 0)
-undressBtn:SetText("Undress")
-undressBtn:SetScript("OnClick", Undress)
-undressBtn:SetScript("OnEnter", function(self)
-    GameTooltip:SetOwner(self, "ANCHOR_TOP")
-    GameTooltip:AddLine("Unequip all items to bags")
-    GameTooltip:Show()
-end)
-undressBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
-
 -- Bank buttons (with set name input)
 local bankLabel = bottomArea:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-bankLabel:SetPoint("LEFT", undressBtn, "RIGHT", 12, 0)
+bankLabel:SetPoint("LEFT", bottomArea, "LEFT", 0, 0)
 bankLabel:SetText("|cFF" .. C_MUTED .. "Bank:|r")
 
 local toBankBtn = CreateFrame("Button", nil, bottomArea, "UIPanelButtonTemplate")
@@ -1328,6 +1316,34 @@ hp:Hide()
 helpPanel.Toggle = function()
     if hp:IsShown() then hp:Hide() else hp:Show() end
 end
+
+-- ===========================================================================
+-- ITEM TOOLTIPS — show which sets an item belongs to
+-- ===========================================================================
+
+GameTooltip:HookScript("OnTooltipSetItem", function(self)
+    if not db or not db.sets then return end
+    local _, link = self:GetItem()
+    if not link then return end
+    local itemId = tonumber(link:match("item:(%d+)"))
+    if not itemId then return end
+
+    local matchingSets = {}
+    for setName, set in pairs(db.sets) do
+        for _, itemData in pairs(set.items) do
+            if itemData.id == itemId then
+                table.insert(matchingSets, setName)
+                break
+            end
+        end
+    end
+
+    if #matchingSets > 0 then
+        table.sort(matchingSets)
+        self:AddLine("|cFF" .. ACCENT .. "[SWAG]|r " .. table.concat(matchingSets, ", "))
+        self:Show()
+    end
+end)
 
 -- ===========================================================================
 -- SLASH COMMANDS
