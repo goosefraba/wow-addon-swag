@@ -1,0 +1,9 @@
+*.bak
+*.orig
+*.zip
+.DS_Store
+Thumbs.db
+
+# Claude Code / agent docs (not for end users)
+CLAUDE.md
+.claude/
