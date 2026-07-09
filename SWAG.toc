@@ -1,8 +1,8 @@
-## Interface: 20505
+## Interface: 20506
 ## Title: SWAG - Set Wear And Go
 ## Notes: A simple equipment set manager. Save, equip, and bank your gear sets.
 ## Author: goosefraba
-## Version: 0.1.0
+## Version: 0.3.0
 ## SavedVariables: SWAGDB
 
 SWAG.lua
